@@ -166,6 +166,7 @@
 <!-- tabs -->
   <div class="tabs">
   <div class="tab active" onclick="switchTab('pipeline')">파이프라인 구조</div>
+  <div class="tab" onclick="switchTab('diagram')">구조도</div>
   <div class="tab" onclick="switchTab('files')">신규 파일 목록</div>
 </div>
 
@@ -339,7 +340,231 @@
   </div>
 </div>
 
-<!-- ═══════════════ TAB 2: FILES ═══════════════ -->
+<!-- ═══════════════ TAB 2: DIAGRAM ═══════════════ -->
+<div class="tab-panel" id="tab-diagram">
+<style>
+#dg-wrap{position:relative;width:100%;padding:8px 0}
+canvas#dg-canvas{display:block;width:100%;cursor:default}
+.dg-legend2{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;
+            background:var(--card);border:1px solid var(--border);border-radius:8px}
+.dg-leg2{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--sub)}
+.dg-leg2-line{width:22px;height:2px}
+</style>
+<div id="dg-wrap">
+  <canvas id="dg-canvas"></canvas>
+  <div class="dg-legend2">
+    <div class="dg-leg2"><div class="dg-leg2-line" style="background:#64748b"></div>순차 실행 (PASS)</div>
+    <div class="dg-leg2"><div class="dg-leg2-line" style="background:repeating-linear-gradient(90deg,#64748b 0,#64748b 4px,transparent 4px,transparent 8px)"></div>when: always</div>
+    <div class="dg-leg2"><div class="dg-leg2-line" style="background:repeating-linear-gradient(90deg,#ef4444 0,#ef4444 4px,transparent 4px,transparent 8px)"></div>Fail → Merge 차단</div>
+    <div class="dg-leg2"><span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block"></span>Lint Warning → WARN</div>
+  </div>
+</div>
+<script>
+(function(){
+  const cv = document.getElementById('dg-canvas');
+  const S = 2;
+  const CW = 680, CH = 480;
+  cv.width = CW*S; cv.height = CH*S;
+  cv.style.height = CH+'px';
+  const ctx = cv.getContext('2d');
+  ctx.scale(S,S);
+
+  /* ── palette (light-safe hardcoded) ── */
+  const C = {
+    teal:  {bg:'#f0fdfa', bd:'#2dd4bf', tx:'#0f766e'},
+    blue:  {bg:'#eff6ff', bd:'#60a5fa', tx:'#1d4ed8'},
+    purp:  {bg:'#f5f3ff', bd:'#a78bfa', tx:'#6d28d9'},
+    amber: {bg:'#fffbeb', bd:'#fbbf24', tx:'#b45309'},
+    green: {bg:'#dcfce7', bd:'#4ade80', tx:'#15803d'},
+    red:   {bg:'#fee2e2', bd:'#f87171', tx:'#b91c1c'},
+    gray:  {bg:'#f1f5f9', bd:'#94a3b8', tx:'#475569'},
+    server:{bg:'#f8fafc', bd:'#94a3b8'},
+  };
+
+  /* ── node definitions: [id, label, sub, color, x, y, w, h] ── */
+  const NW=120, NH=52, pad=16;
+  /* Row 1 y=60: Filelist Lint Compile Simulate  (4 nodes, spaced) */
+  const r1y=60, gap=14;
+  const r1xs = [pad, pad+NW+gap, pad+2*(NW+gap), pad+3*(NW+gap)];
+  /* Row 2 y=175: Synthesis aligned under Simulate */
+  const r2y=175;
+  /* Row 3 y=290: Report aligned under Synthesis */
+  const r3y=290;
+  /* Row 4 y=395: outputs */
+  const r4y=395;
+
+  const nodes = {
+    fl: {label:'1 · Filelist',   sub:'auto_filelist sync',    c:C.teal,  x:r1xs[0], y:r1y, w:NW, h:NH},
+    lt: {label:'2 · Lint',       sub:'spyglass run',          c:C.blue,  x:r1xs[1], y:r1y, w:NW, h:NH},
+    cp: {label:'3 · Compile',    sub:'vcs_sim comp',          c:C.purp,  x:r1xs[2], y:r1y, w:NW, h:NH},
+    sm: {label:'4 · Simulate',   sub:'vcs_sim run + cov',     c:C.purp,  x:r1xs[3], y:r1y, w:NW, h:NH},
+    sy: {label:'5 · Synthesis',  sub:'synthesis parallel',    c:C.amber, x:r1xs[3], y:r2y, w:NW, h:NH},
+    rp: {label:'6 · Report',     sub:'parse + dashboard',     c:C.teal,  x:r1xs[3], y:r3y, w:NW, h:NH},
+    fail:{label:'Pipeline FAIL', sub:'Merge 차단',             c:C.red,   x:pad,     y:r2y, w:NW, h:NH},
+    pg: {label:'GitLab Pages',   sub:'Dashboard',             c:C.green, x:pad,            y:r4y, w:NW, h:NH},
+    mr: {label:'MR 코멘트',       sub:'GitLab API',            c:C.green, x:pad+NW+gap,     y:r4y, w:NW, h:NH},
+    art:{label:'Artifacts',      sub:'logs / reports',        c:C.gray,  x:pad+2*(NW+gap), y:r4y, w:NW, h:NH},
+  };
+
+  /* ── helpers ── */
+  function cx(n){return n.x+n.w/2}
+  function cy(n){return n.y+n.h/2}
+  function bot(n){return n.y+n.h}
+  function top(n){return n.y}
+  function right(n){return n.x+n.w}
+  function left(n){return n.x}
+
+  function arrow(x1,y1,x2,y2,col,dash){
+    ctx.save();
+    ctx.strokeStyle=col; ctx.lineWidth=1.5;
+    if(dash) ctx.setLineDash([5,4]); else ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    /* arrowhead */
+    const ang=Math.atan2(y2-y1,x2-x1);
+    const as=7;
+    ctx.setLineDash([]);
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-as*Math.cos(ang-0.4), y2-as*Math.sin(ang-0.4));
+    ctx.lineTo(x2-as*Math.cos(ang+0.4), y2-as*Math.sin(ang+0.4));
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function arrowL(pts, col, dash){
+    /* pts: array of [x,y], draws polyline then arrowhead at last segment */
+    ctx.save();
+    ctx.strokeStyle=col; ctx.lineWidth=1.5;
+    if(dash) ctx.setLineDash([5,4]); else ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+    ctx.stroke();
+    const last=pts[pts.length-1], prev=pts[pts.length-2];
+    const ang=Math.atan2(last[1]-prev[1],last[0]-prev[0]);
+    const as=7;
+    ctx.setLineDash([]);
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    ctx.moveTo(last[0],last[1]);
+    ctx.lineTo(last[0]-as*Math.cos(ang-0.4), last[1]-as*Math.sin(ang-0.4));
+    ctx.lineTo(last[0]-as*Math.cos(ang+0.4), last[1]-as*Math.sin(ang+0.4));
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawNode(n){
+    const r=9;
+    ctx.save();
+    /* shadow-like border */
+    ctx.beginPath();
+    ctx.roundRect(n.x,n.y,n.w,n.h,r);
+    ctx.fillStyle=n.c.bg; ctx.fill();
+    ctx.strokeStyle=n.c.bd; ctx.lineWidth=1.5; ctx.stroke();
+    /* label */
+    ctx.fillStyle=n.c.tx;
+    ctx.font='700 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(n.label, cx(n), n.y+17);
+    ctx.fillStyle=n.c.tx+'bb';
+    ctx.font='400 10px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    ctx.fillText(n.sub, cx(n), n.y+33);
+    ctx.restore();
+  }
+
+  function drawServer(){
+    const sx=pad-8, sy=r1y-20, sw=CW-2*(pad-8), sh=(r3y+NH+12)-sy;
+    ctx.save();
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.roundRect(sx,sy,sw,sh,12); ctx.stroke();
+    ctx.setLineDash([]);
+    /* label */
+    const lbl='Remote EDA Server (GitLab Runner — shell executor)';
+    ctx.font='500 10px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    const tw=ctx.measureText(lbl).width;
+    ctx.fillStyle='#f8fafc'; ctx.fillRect(sx+12,sy-7,tw+8,14);
+    ctx.fillStyle='#64748b'; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(lbl, sx+16, sy);
+    ctx.restore();
+  }
+
+  /* ── draw ── */
+  /* 1. server box */
+  drawServer();
+
+  /* 2. arrows — draw before nodes so nodes sit on top */
+  const GRAY='#64748b', RED='#ef4444';
+
+  /* R1 horizontal: fl→lt→cp→sm */
+  arrow(right(nodes.fl), cy(nodes.fl), left(nodes.lt),  cy(nodes.lt),  GRAY, false);
+  arrow(right(nodes.lt), cy(nodes.lt), left(nodes.cp),  cy(nodes.cp),  GRAY, false);
+  arrow(right(nodes.cp), cy(nodes.cp), left(nodes.sm),  cy(nodes.sm),  GRAY, false);
+
+  /* sm → sy (down) */
+  arrow(cx(nodes.sm), bot(nodes.sm), cx(nodes.sy), top(nodes.sy), GRAY, false);
+
+  /* sy → rp (down, dashed = always) */
+  arrow(cx(nodes.sy), bot(nodes.sy), cx(nodes.rp), top(nodes.rp), GRAY, true);
+  /* "when: always" label */
+  ctx.save();
+  ctx.font='400 9px -apple-system,sans-serif';
+  ctx.fillStyle='#94a3b8'; ctx.textAlign='left';
+  ctx.fillText('when: always', cx(nodes.sy)+4, bot(nodes.sy)+14);
+  ctx.restore();
+
+  /* FAIL paths — each node drops a red dashed line down to fail box level,
+     then routes left into fail box */
+  const failMidY = cy(nodes.fail);
+  /* gather fail sources */
+  [nodes.fl, nodes.lt, nodes.cp, nodes.sm].forEach(n=>{
+    arrowL([
+      [cx(n), bot(n)],
+      [cx(n), failMidY],
+      [right(nodes.fail), failMidY]
+    ], RED, true);
+  });
+  /* sy → fail (left) */
+  arrowL([
+    [left(nodes.sy), cy(nodes.sy)],
+    [right(nodes.fail)+1, cy(nodes.fail)]
+  ], RED, true);
+
+  /* rp → pg, mr, art (down from report) */
+  /* rp is at r1xs[3], outputs start at pad */
+  const rpBot = bot(nodes.rp);
+  const rpCx  = cx(nodes.rp);
+  /* report → Pages */
+  arrowL([
+    [rpCx,  rpBot],
+    [rpCx,  rpBot+20],
+    [cx(nodes.pg), rpBot+20],
+    [cx(nodes.pg), top(nodes.pg)]
+  ], GRAY, false);
+  /* report → MR */
+  arrowL([
+    [rpCx,  rpBot],
+    [rpCx,  rpBot+20],
+    [cx(nodes.mr), rpBot+20],
+    [cx(nodes.mr), top(nodes.mr)]
+  ], GRAY, false);
+  /* report → art */
+  arrowL([
+    [rpCx,  rpBot],
+    [rpCx,  rpBot+20],
+    [cx(nodes.art), rpBot+20],
+    [cx(nodes.art), top(nodes.art)]
+  ], GRAY, false);
+
+  /* 3. nodes on top */
+  Object.values(nodes).forEach(drawNode);
+
+})();
+</script>
+</div>
+
+<!-- ═══════════════ TAB 3: FILES ═══════════════ -->
 <div class="tab-panel" id="tab-files">
   <div class="sec">신규 작성 파일 (ci/ 폴더 — 6개)</div>
   <table class="diff-table">
@@ -377,7 +602,7 @@
 // ── tab switch ──
 function switchTab(id){
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    t.classList.toggle('active', ['pipeline','files'][i]===id);
+    t.classList.toggle('active', ['pipeline','diagram','files'][i]===id);
   });
   document.querySelectorAll('.tab-panel').forEach(p=>{
     p.classList.toggle('active', p.id==='tab-'+id);
