@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASIC CI/CD Pipeline — research_npu_core</title>
+<style>
+  :root{
+    --bg:#f8fafc;--card:#fff;--border:#e2e8f0;--text:#1a202c;--sub:#64748b;
+    --pass:#16a34a;--pass-bg:#dcfce7;--pass-bd:#86efac;
+    --fail:#dc2626;--fail-bg:#fee2e2;--fail-bd:#fca5a5;
+    --warn:#d97706;--warn-bg:#fef3c7;--warn-bd:#fcd34d;
+    --info:#2563eb;--info-bg:#eff6ff;--info-bd:#93c5fd;
+    --skip:#6b7280;--skip-bg:#f1f5f9;--skip-bd:#cbd5e1;
+    --c1:#0f766e;--c1-bg:#f0fdfa;--c1-bd:#99f6e4;   /* filelist: teal */
+    --c2:#1d4ed8;--c2-bg:#eff6ff;--c2-bd:#bfdbfe;   /* lint: blue */
+    --c3:#6d28d9;--c3-bg:#f5f3ff;--c3-bd:#ddd6fe;   /* compile: purple */
+    --c4:#7c3aed;--c4-bg:#faf5ff;--c4-bd:#e9d5ff;   /* sim: violet */
+    --c5:#b45309;--c5-bg:#fffbeb;--c5-bd:#fde68a;   /* syn: amber */
+    --c6:#0d9488;--c6-bg:#f0fdfa;--c6-bd:#5eead4;   /* report: teal2 */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       background:var(--bg);color:var(--text);padding:24px;min-width:900px}
+
+  .hdr{margin-bottom:18px}
+  .hdr h1{font-size:16px;font-weight:700;margin-bottom:3px}
+  .hdr p{font-size:11px;color:var(--sub)}
+
+  /* tab nav */
+  .tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:2px solid var(--border);padding-bottom:0}
+  .tab{padding:6px 16px;font-size:12px;font-weight:500;color:var(--sub);cursor:pointer;
+       border-radius:6px 6px 0 0;border:1px solid transparent;margin-bottom:-2px}
+  .tab:hover{background:var(--card)}
+  .tab.active{background:var(--card);color:var(--info);border-color:var(--border);
+               border-bottom-color:var(--card);font-weight:700}
+  .tab-panel{display:none}.tab-panel.active{display:block}
+
+  /* legend */
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;
+          padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px}
+  .leg{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--sub)}
+  .leg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+  /* section */
+  .sec{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+       color:var(--sub);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .sec::after{content:'';flex:1;height:1px;background:var(--border)}
+
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:0;margin-bottom:20px}
+  .stage{flex:1;display:flex;flex-direction:column}
+  .sc{flex:1;border-radius:10px;border:1.5px solid var(--border);background:var(--card);
+      overflow:hidden;cursor:pointer;transition:box-shadow .15s,transform .15s;
+      box-shadow:0 1px 2px rgba(0,0,0,.05);display:flex;flex-direction:column}
+  .sc:hover{box-shadow:0 4px 14px rgba(0,0,0,.11);transform:translateY(-2px)}
+  .sc.active{box-shadow:0 0 0 3px rgba(37,99,235,.18)}
+
+  .sh{padding:9px 11px 7px;display:flex;align-items:center;gap:6px}
+  .snum{width:19px;height:19px;border-radius:50%;font-size:10px;font-weight:700;
+        display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .stitle{font-size:12px;font-weight:700}
+  .stool{font-size:10px;color:var(--sub);padding:2px 11px 5px;font-weight:400}
+  .sb{padding:6px 11px 10px;border-top:1px solid var(--border);flex:1;display:flex;flex-direction:column;gap:4px}
+  .sb p{font-size:11px;color:var(--sub);line-height:1.4;margin-bottom:1px}
+  .tags{display:flex;flex-wrap:wrap;gap:3px}
+  .tag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:99px;
+       font-size:10px;font-weight:500;border:1px solid;white-space:nowrap}
+  .tf{background:var(--fail-bg);color:var(--fail);border-color:var(--fail-bd)}
+  .tw{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-bd)}
+  .ts{background:var(--skip-bg);color:var(--skip);border-color:var(--skip-bd)}
+  .ti{background:var(--info-bg);color:var(--info);border-color:var(--info-bd)}
+  .tp{background:var(--pass-bg);color:var(--pass);border-color:var(--pass-bd)}
+
+  /* stage color themes */
+  .c1.sc{border-color:var(--c1-bd)} .c1 .sh{background:var(--c1-bg)} .c1 .snum{background:var(--c1);color:#fff} .c1 .stitle{color:var(--c1)}
+  .c2.sc{border-color:var(--c2-bd)} .c2 .sh{background:var(--c2-bg)} .c2 .snum{background:var(--c2);color:#fff} .c2 .stitle{color:var(--c2)}
+  .c3.sc{border-color:var(--c3-bd)} .c3 .sh{background:var(--c3-bg)} .c3 .snum{background:var(--c3);color:#fff} .c3 .stitle{color:var(--c3)}
+  .c4.sc{border-color:var(--c4-bd)} .c4 .sh{background:var(--c4-bg)} .c4 .snum{background:var(--c4);color:#fff} .c4 .stitle{color:var(--c4)}
+  .c5.sc{border-color:var(--c5-bd)} .c5 .sh{background:var(--c5-bg)} .c5 .snum{background:var(--c5);color:#fff} .c5 .stitle{color:var(--c5)}
+  .c6.sc{border-color:var(--c6-bd)} .c6 .sh{background:var(--c6-bg)} .c6 .snum{background:var(--c6);color:#fff} .c6 .stitle{color:var(--c6)}
+
+  /* arrow */
+  .aw{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+      padding-top:30px;width:26px;flex-shrink:0;gap:2px}
+  .al{font-size:9px;color:var(--sub);white-space:nowrap}
+  .aln{width:18px;height:2px;background:#cbd5e1;position:relative;flex-shrink:0}
+  .aln::after{content:'';position:absolute;right:-1px;top:-4px;
+              border:5px solid transparent;border-left-color:#cbd5e1}
+  .always .aln{background:#94a3b8;background:repeating-linear-gradient(90deg,#94a3b8 0,#94a3b8 4px,transparent 4px,transparent 7px)}
+  .always .aln::after{border-left-color:#94a3b8}
+
+  /* detail panel */
+  #dp{background:var(--card);border:1.5px solid var(--info-bd);border-radius:10px;
+      padding:16px 18px;margin-bottom:18px;display:none}
+  #dp.show{display:block;animation:fi .18s}
+  @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  #dp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  #dp-title{font-size:13px;font-weight:700;color:var(--info)}
+  .dp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .dp-item{background:#f8fafc;border-radius:7px;padding:9px 11px}
+  .dp-item h5{font-size:9px;font-weight:700;color:var(--sub);letter-spacing:.05em;
+              text-transform:uppercase;margin-bottom:4px}
+  .dp-item p{font-size:11px;line-height:1.5;color:var(--text)}
+  .dp-item code{background:#e2e8f0;padding:1px 4px;border-radius:3px;font-size:10px;font-family:monospace}
+  .close-btn{cursor:pointer;color:var(--sub);font-size:14px;padding:2px 4px}
+
+  /* fail conditions */
+  .cond-row{display:flex;gap:10px;margin-bottom:18px}
+  .cond-box{flex:1;border-radius:9px;padding:12px 14px;border:1.5px solid;font-size:11px}
+  .cond-box h3{font-size:11px;font-weight:700;margin-bottom:7px}
+  .cond-box ul{list-style:none;padding:0;display:flex;flex-direction:column;gap:3px}
+  .cond-box li{display:flex;align-items:flex-start;gap:5px;font-size:11px;line-height:1.4}
+  .cond-box li::before{content:'';width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:3px}
+  .cb-fail{background:var(--fail-bg);border-color:var(--fail-bd);color:#7f1d1d}
+  .cb-fail li::before{background:var(--fail)}
+  .cb-warn{background:var(--warn-bg);border-color:var(--warn-bd);color:#78350f}
+  .cb-warn li::before{background:var(--warn)}
+  .cb-skip{background:var(--skip-bg);border-color:var(--skip-bd);color:#374151}
+  .cb-skip li::before{background:var(--skip)}
+
+  /* artifact grid */
+  .art-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:18px}
+  .art-card{background:var(--card);border:1px solid var(--border);border-radius:7px;padding:9px 11px}
+  .art-card h4{font-size:11px;font-weight:700;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+  .art-card ul{list-style:none;padding:0;display:flex;flex-direction:column;gap:3px}
+  .art-card li{font-size:10px;color:var(--sub);line-height:1.4;word-break:break-all;
+               display:flex;align-items:flex-start;gap:3px}
+  .art-card li::before{content:'›';color:#cbd5e1;flex-shrink:0}
+  .art-card li strong{color:var(--text);font-weight:600}
+
+  /* diff table */
+  .diff-table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}
+  .diff-table th{background:#f1f5f9;padding:7px 10px;text-align:left;font-weight:600;
+                 border-bottom:1px solid var(--border);color:var(--sub)}
+  .diff-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.4}
+  .diff-table tr:last-child td{border-bottom:none}
+  .diff-table td code{background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:10px;font-family:monospace}
+  .badge-new{display:inline-block;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600;
+             background:#dcfce7;color:#15803d;border:1px solid #86efac;margin-left:4px}
+  .badge-mod{display:inline-block;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600;
+             background:#fef3c7;color:#92400e;border:1px solid #fcd34d;margin-left:4px}
+  .badge-rm{display:inline-block;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600;
+            background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;margin-left:4px}
+
+  /* notify */
+  .noti-row{display:flex;gap:10px}
+  .noti-card{flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:9px;padding:12px 14px}
+  .noti-card h4{font-size:11px;font-weight:700;margin-bottom:5px}
+  .noti-card p{font-size:11px;color:var(--sub);line-height:1.5}
+  .noti-card code{background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:10px}
+
+  /* caution box */
+  .caution{background:#fffbeb;border:1.5px solid var(--warn-bd);border-radius:8px;
+           padding:10px 14px;font-size:11px;color:#78350f;margin-bottom:14px;line-height:1.6}
+  .caution strong{font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>⚙️ ASIC CI/CD Pipeline — research_npu_core</h1>
+  <p>GitLab Self-hosted · Remote EDA Server (Shell Runner) · 각 Stage 클릭 시 상세 정보 표시</p>
+</div>
+
+<!-- tabs -->
+  <div class="tabs">
+  <div class="tab active" onclick="switchTab('pipeline')">파이프라인 구조</div>
+  <div class="tab" onclick="switchTab('files')">신규 파일 목록</div>
+</div>
+
+<!-- ═══════════════ TAB 1: PIPELINE ═══════════════ -->
+<div class="tab-panel active" id="tab-pipeline">
+
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:var(--fail)"></div>Pipeline FAIL — Merge 차단</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--warn)"></div>WARN — allow_failure (Merge 허용)</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--skip)"></div>참고 전용</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--c6)"></div>항상 실행 (when: always)</div>
+  </div>
+
+  <div id="dp">
+    <div id="dp-head">
+      <span id="dp-title"></span>
+      <span class="close-btn" onclick="closeDp()">✕</span>
+    </div>
+    <div class="dp-grid" id="dp-body"></div>
+  </div>
+
+  <div class="sec">파이프라인 흐름 — 기존 Makefile 타겟 직접 호출</div>
+  <div class="pipe">
+
+    <div class="stage"><div class="sc c1" id="s-filelist" onclick="showDp('filelist')">
+      <div class="sh"><div class="snum">1</div><div class="stitle">Filelist</div></div>
+      <div class="stool">auto_filelist/Makefile sync</div>
+      <div class="sb"><p>RTL 변경 시 filelist 정합성 보장</p>
+        <div class="tags"><span class="tag tf">⛔ 불일치 → FAIL</span></div>
+      </div>
+    </div></div>
+
+    <div class="aw"><div class="al">PASS</div><div class="aln"></div></div>
+
+    <div class="stage"><div class="sc c2" id="s-lint" onclick="showDp('lint')">
+      <div class="sh"><div class="snum">2</div><div class="stitle">Lint</div></div>
+      <div class="stool">spyglass/Makefile run</div>
+      <div class="sb"><p>sg_shell 기반 RTL 규칙 검사</p>
+        <div class="tags">
+          <span class="tag tf">⛔ Error → FAIL</span>
+          <span class="tag tw">Warning → WARN</span>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="aw"><div class="al">PASS</div><div class="aln"></div></div>
+
+    <div class="stage"><div class="sc c3" id="s-compile" onclick="showDp('compile')">
+      <div class="sh"><div class="snum">3</div><div class="stitle">Compile</div></div>
+      <div class="stool">vcs_sim/Makefile comp</div>
+      <div class="sb"><p>VCS SV 컴파일 → simv 생성</p>
+        <div class="tags"><span class="tag tf">⛔ Error → FAIL</span></div>
+      </div>
+    </div></div>
+
+    <div class="aw"><div class="al">PASS</div><div class="aln"></div></div>
+
+    <div class="stage"><div class="sc c4" id="s-sim" onclick="showDp('sim')">
+      <div class="sh"><div class="snum">4</div><div class="stitle">Simulate</div></div>
+      <div class="stool">vcs_sim/Makefile run + cov</div>
+      <div class="sb"><p>parallel_sim.py 병렬 실행 + URG</p>
+        <div class="tags">
+          <span class="tag tf">⛔ Sim Error → FAIL</span>
+          <span class="tag ts">Coverage → 참고</span>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="aw"><div class="al">PASS</div><div class="aln"></div></div>
+
+    <div class="stage"><div class="sc c5" id="s-dc" onclick="showDp('dc')">
+      <div class="sh"><div class="snum">5</div><div class="stitle">Synthesis</div></div>
+      <div class="stool">synthesis/Makefile parallel</div>
+      <div class="sb"><p>jobs.conf 기반 병렬 DC 합성</p>
+        <div class="tags">
+          <span class="tag tf">⛔ DC Error → FAIL</span>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="aw always"><div class="al">always</div><div class="aln"></div></div>
+
+    <div class="stage"><div class="sc c6" id="s-report" onclick="showDp('report')">
+      <div class="sh"><div class="snum">6</div><div class="stitle">Report</div></div>
+      <div class="stool">ci/generate_report.sh</div>
+      <div class="sb"><p>대시보드 생성 + MR 코멘트</p>
+        <div class="tags"><span class="tag ti">항상 실행</span></div>
+      </div>
+    </div></div>
+
+  </div>
+
+  <!-- caution: background execution -->
+  <div class="caution">
+    ⚠️ <strong>백그라운드 실행 주의</strong> — 기존 Makefile의 <code>run</code> 타겟은 nohup 백그라운드로 실행됩니다. GitLab CI job은 script 완료 = job 종료이므로, <code>ci/wait_and_collect.sh</code>로 완료 대기 후 결과를 수집해야 합니다. 또는 서브 Makefile을 foreground 옵션으로 직접 호출하는 방식(전략 A) 권장.
+  </div>
+
+  <!-- fail conditions -->
+  <div class="sec">파이프라인 실패 조건</div>
+  <div class="cond-row">
+    <div class="cond-box cb-fail">
+      <h3>🚫 Pipeline FAIL — Merge 차단</h3>
+      <ul>
+        <li>Filelist: MISSING / NOT FOUND 패턴</li>
+        <li>Lint: Spyglass Error 패턴 (<code>^Error</code>, <code>^E-</code>)</li>
+        <li>Compile: VCS <code>Error-[</code>, <code>**Error</code> 패턴</li>
+        <li>Simulate: FAIL / TIMEOUT / ERROR 패턴</li>
+        <li>Synthesis: DC Error 패턴</li>
+      </ul>
+    </div>
+    <div class="cond-box cb-warn">
+      <h3>⚠️ WARN — Merge 허용 (allow_failure)</h3>
+      <ul>
+        <li>Lint: Warning만 존재 (<code>^Warning</code>, <code>^W-</code>)</li>
+      </ul>
+    </div>
+    <div class="cond-box cb-skip">
+      <h3>📋 참고 전용</h3>
+      <ul>
+        <li>Coverage % — Dashboard 표시만</li>
+        <li>DC Timing (수집은 하되 FAIL 조건 없음)</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- artifacts -->
+  <div class="sec">Stage별 Artifact</div>
+  <div class="art-grid">
+    <div class="art-card"><h4>1 · Filelist</h4><ul>
+      <li>ci/reports/filelist.log</li>
+      <li>ci/reports/filelist/status.txt</li>
+    </ul></div>
+    <div class="art-card"><h4>2 · Lint</h4><ul>
+      <li>ci/reports/lint/sg.log</li>
+      <li>ci/reports/lint/sg_summary/</li>
+      <li>ci/reports/lint/status.txt</li>
+    </ul></div>
+    <div class="art-card"><h4>3 · Compile</h4><ul>
+      <li>ci/reports/compile.log</li>
+      <li>ci/reports/compile/status.txt</li>
+      <li><strong>simv</strong> (4단계 재사용)</li>
+      <li>simv.daidir/</li>
+    </ul></div>
+    <div class="art-card"><h4>4 · Simulate</h4><ul>
+      <li>ci/reports/sim/sim_summary.log</li>
+      <li>ci/reports/sim/status.txt</li>
+      <li>ci/reports/coverage/</li>
+    </ul></div>
+    <div class="art-card"><h4>5 · Synthesis</h4><ul>
+      <li>ci/reports/dc/dc.log</li>
+      <li>ci/reports/dc/results.csv</li>
+      <li>ci/reports/dc/status.txt</li>
+    </ul></div>
+    <div class="art-card"><h4>6 · Report</h4><ul>
+      <li><strong>public/index.html</strong></li>
+      <li>→ GitLab Pages 배포</li>
+    </ul></div>
+  </div>
+
+  <!-- notify -->
+  <div class="sec">알림</div>
+  <div class="noti-row">
+    <div class="noti-card">
+      <h4>💬 MR 코멘트 (자동)</h4>
+      <p><code>ci/notify_mr.sh</code> → GitLab API<br>결과표 + Dashboard 링크 자동 등록<br>MR 이벤트일 때만 동작</p>
+    </div>
+    <div class="noti-card">
+      <h4>📊 GitLab Pages Dashboard</h4>
+      <p>when: always로 항상 생성<br>Stage badge · Timing · Coverage % · 로그 링크</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ TAB 2: FILES ═══════════════ -->
+<div class="tab-panel" id="tab-files">
+  <div class="sec">신규 작성 파일 (ci/ 폴더 — 6개)</div>
+  <table class="diff-table">
+    <thead><tr><th>파일</th><th>상태</th><th>역할</th></tr></thead>
+    <tbody>
+      <tr><td><code>ci/check_exit.sh</code></td><td><span class="badge-mod">수정</span></td><td>로그 파싱 패턴을 실제 VCS/DC/SG 로그에 맞게 수정. stage별 grep 패턴 분리</td></tr>
+      <tr><td><code>ci/wait_and_collect.sh</code></td><td><span class="badge-new">신규</span></td><td>백그라운드 작업 완료 대기 (polling) + 결과 파일 수집. vcs / synthesis / spyglass 3가지 케이스 처리</td></tr>
+      <tr><td><code>ci/parse_results.py</code></td><td>유지</td><td>status.txt → summary.json 통합</td></tr>
+      <tr><td><code>ci/gen_dashboard.py</code></td><td>유지</td><td>summary.json → public/index.html HTML 대시보드</td></tr>
+      <tr><td><code>ci/notify_mr.sh</code></td><td>유지</td><td>GitLab API → MR 코멘트 자동 등록 (MR 이벤트만)</td></tr>
+      <tr><td><code>ci/run_ci.conf</code></td><td><span class="badge-new">선택</span></td><td>CI 전용 설정 오버라이드 (환경변수 방식 권장)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="sec" style="margin-top:16px">삭제 / 불필요한 파일</div>
+  <table class="diff-table">
+    <thead><tr><th>파일</th><th>사유</th></tr></thead>
+    <tbody>
+      <tr><td><code>ci/run_spyglass.sh</code></td><td>기존 <code>spyglass/Makefile run</code> 타겟이 동일 역할 수행 → 불필요</td></tr>
+      <tr><td>루트 <code>Makefile</code> (신규)</td><td>기존 서브 Makefile 직접 호출로 대체 → 불필요</td></tr>
+    </tbody>
+  </table>
+
+  <div class="sec" style="margin-top:16px">수정 파일 (기존)</div>
+  <table class="diff-table">
+    <thead><tr><th>파일</th><th>수정 내용</th></tr></thead>
+    <tbody>
+      <tr><td><code>.gitignore</code></td><td>macro/, fpga/vivado_*/, sim/tb_regression/vcs_sim/sim_logs/, simv, simv.daidir/, synthesis/syn_*/, spyglass/spy_*/, ci/reports/, public/ 추가</td></tr>
+      <tr><td><code>.gitlab-ci.yml</code></td><td>신규 생성 — 6 stage, 서브 Makefile 직접 호출, 타임아웃 설정</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+// ── tab switch ──
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    t.classList.toggle('active', ['pipeline','files'][i]===id);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p=>{
+    p.classList.toggle('active', p.id==='tab-'+id);
+  });
+  closeDp();
+}
+
+// ── detail data ──
+const D = {
+  filelist:{
+    title:'Stage 1 — Filelist Sync  |  auto_filelist/Makefile',
+    items:[
+      {h:'실행 명령',p:'<code>make -C $TB_REG/auto_filelist sync</code><br><code>make -C $TB_REG/auto_filelist check</code>'},
+      {h:'내부 동작',p:'filelist_generator.py 실행<br>IP/모듈별 다중 filelist 자동 동기화'},
+      {h:'FAIL 조건',p:'MISSING / NOT FOUND / ERROR 패턴<br>→ exit 1, Merge 차단 ⛔'},
+      {h:'Notion 원안 대비',p:'Notion 계획에 없던 stage<br>RTL 변경 정합성 보장을 위해 신규 추가'},
+      {h:'Output',p:'ci/reports/filelist.log<br>ci/reports/filelist/status.txt'},
+      {h:'특이사항',p:'기존 auto_filelist/Makefile 무수정<br>CI wrapper 없이 직접 호출'},
+    ]
+  },
+  lint:{
+    title:'Stage 2 — Lint  |  spyglass/Makefile run',
+    items:[
+      {h:'실행 명령',p:'<code>make -C $TB_REG/spyglass run</code><br>DESIGN=$SPY_MODULE FOUNDRY=... PROCESS=...'},
+      {h:'내부 동작',p:'sg_shell -tcl project.tcl 방식<br>(기존 -project *.prj -batch 방식 아님)'},
+      {h:'완료 대기',p:'ci/wait_and_collect.sh spyglass<br>pgrep으로 sg_shell 프로세스 감시'},
+      {h:'FAIL 조건',p:'<code>^Error</code>, <code>^E-</code> 패턴<br>→ exit 1, Merge 차단 ⛔'},
+      {h:'WARN 조건',p:'<code>^Warning</code>, <code>^W-</code> 패턴<br>→ allow_failure, Merge 허용'},
+      {h:'Output',p:'ci/reports/lint/sg.log<br>ci/reports/lint/status.txt'},
+    ]
+  },
+  compile:{
+    title:'Stage 3 — Compile  |  vcs_sim/Makefile comp',
+    items:[
+      {h:'실행 명령',p:'<code>make -C $TB_REG/vcs_sim comp</code><br>FOUNDRY=$FOUNDRY PROCESS=$PROCESS'},
+      {h:'Notion 원안 대비',p:'vcs -sverilog 직접 호출 → Makefile 타겟으로 대체<br>filelist도 Makefile 내부에서 자동 관리'},
+      {h:'FAIL 조건',p:'<code>Error-[</code>, <code>**Error</code> 패턴<br>→ exit 1, 이후 stage 중단 ⛔'},
+      {h:'Artifact 재사용',p:'simv, simv.daidir/ → simulate stage needs<br>expire_in: 1 day'},
+      {h:'Output',p:'ci/reports/compile.log<br>ci/reports/compile/status.txt'},
+      {h:'특이사항',p:'foreground 실행 — wait_and_collect 불필요<br>comp 타겟은 백그라운드 없음'},
+    ]
+  },
+  sim:{
+    title:'Stage 4 — Simulate  |  vcs_sim/Makefile run + cov-report',
+    items:[
+      {h:'실행 명령',p:'<code>make -C $TB_REG/vcs_sim run</code><br>JOBS=16 TIMEOUT=600 TC_FILTER=*'},
+      {h:'백그라운드 이슈',p:'run 타겟은 nohup 백그라운드 실행<br>→ ci/wait_and_collect.sh vcs로 완료 대기'},
+      {h:'커버리지',p:'<code>make -C vcs_sim cov-merge</code><br><code>make -C vcs_sim cov-report</code>'},
+      {h:'FAIL 조건',p:'sim_summary.log에서<br>FAIL / TIMEOUT / ERROR 패턴 검출'},
+      {h:'Coverage 정책',p:'Line/Cond % → Dashboard 표시만<br>파이프라인 성패 무관 (참고용)'},
+      {h:'타임아웃',p:'job timeout: 24h<br>wait_and_collect MAX_WAIT: 23h'},
+    ]
+  },
+  dc:{
+    title:'Stage 5 — Synthesis  |  synthesis/Makefile parallel',
+    items:[
+      {h:'실행 명령',p:'<code>make -C $TB_REG/synthesis parallel</code><br>DESIGN=core_top_wrapper CONF=jobs.conf'},
+      {h:'결과 수집',p:'<code>make -C synthesis collect</code><br><code>make -C synthesis collect_csv</code>'},
+      {h:'백그라운드 이슈',p:'parallel 타겟도 백그라운드 실행 가능성<br>→ ci/wait_and_collect.sh synthesis로 완료 대기'},
+      {h:'FAIL 조건',p:'dc.log에서 <code>^Error:</code>, <code>FAILED</code> 패턴<br>→ exit 1, Merge 차단 ⛔'},
+      {h:'Output',p:'ci/reports/dc/dc.log<br>ci/reports/dc/results.csv<br>ci/reports/dc/status.txt'},
+      {h:'타임아웃',p:'job timeout: 24h<br>SNPSLMD_QUEUE=true 라이선스 대기 주의'},
+    ]
+  },
+  report:{
+    title:'Stage 6 — Report  |  ci/generate_report.sh',
+    items:[
+      {h:'실행 조건',p:'when: always<br>앞 stage 실패해도 항상 실행'},
+      {h:'parse_results.py',p:'모든 status.txt + JSON 수집<br>→ summary.json 통합'},
+      {h:'gen_dashboard.py',p:'summary.json → public/index.html<br>GitLab Pages 자동 배포'},
+      {h:'notify_mr.sh',p:'GitLab API → MR 코멘트 등록<br>MR 이벤트일 때만 동작'},
+      {h:'Dashboard 항목',p:'Stage badge · Timing slack · Coverage %<br>로그 링크 · results.csv'},
+      {h:'Output',p:'public/index.html<br>→ GitLab Pages 배포'},
+    ]
+  },
+};
+
+function showDp(k){
+  const d=D[k];
+  document.querySelectorAll('.sc').forEach(c=>c.classList.remove('active'));
+  document.getElementById('s-'+k).classList.add('active');
+  document.getElementById('dp-title').textContent=d.title;
+  document.getElementById('dp-body').innerHTML=
+    d.items.map(i=>`<div class="dp-item"><h5>${i.h}</h5><p>${i.p}</p></div>`).join('');
+  const p=document.getElementById('dp');
+  p.classList.add('show');
+  p.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function closeDp(){
+  document.getElementById('dp').classList.remove('show');
+  document.querySelectorAll('.sc').forEach(c=>c.classList.remove('active'));
+}
+</script>
+</body>
+</html>
